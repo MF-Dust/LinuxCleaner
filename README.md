@@ -32,6 +32,27 @@ dotnet publish LinuxCleaner.csproj -c Release -r linux-x64 \
 
 arm64 改用 `-r linux-arm64`。使用 `--self-contained false` 时，目标机需要 .NET 10 Runtime。用户清理可以直接运行发布文件或放入 `~/.local/bin`，无需 root。
 
+## 声明式规则包与 CleanerML 导入
+
+31 条内置规则的路径、默认开关与包含/排除策略现存于 **[rules/builtin.json](rules/builtin.json)**，构建时嵌入可执行文件，单文件发布不依赖旁置 JSON。规则行为及原有安全边界不变；不从工作目录或用户提供的 JSON 动态加载规则。
+
+```sh
+linuxcleaner rules --help
+linuxcleaner rules import ./pip.xml \
+  --source https://example.org/pinned/pip.xml \
+  --revision FULL_COMMIT_ID --license GPL-3.0-or-later > review.json
+```
+
+`FILE` 必须是你已下载并检查来源的本地 CleanerML XML；示例 URL/版本须替换成真实来源。命令只解析 XML、计算 SHA-256 并输出**待审核报告**，不联网、不执行上游动作、不删除文件，也不把结果加入 `--all`。`--source`、`--revision`、`--license` 是调用者声明的来源，**不等于真实性或许可证已被核实**；原始 XML 注释也保留在报告中。
+
+- 仅支持 `delete` + `walk.all` / `walk.files` 的受限目录子集；即使原动作包含目录删除，本工具仍只考虑普通文件。
+- 候选必须在现有内置规则已审核、且无需额外子树策略的 XDG/默认缓存范围内。配置目录、新应用路径、整个 uv/Poetry/ccache/JetBrains 等不会因名字含 cache 就被接受。
+- 平台筛选覆盖 cleaner/option/action/var/value；支持有界的 `$$name$$` 变量列表展开，不读取任意环境变量，不调用 shell。
+- DTD/外部实体、超限 XML 被拒绝。未知动作、条件、属性及显式 `<warning>` 会阻止相关整个 option，不能只取其中看似安全的动作。警告写在自然语言 description 中的风险仍需人工识别。
+- 报告状态始终是 `PendingReview`，`AutoEnabled=false`；检查全局 `Issues` 和每个 option/action 的 `Status`、`Issues`、`Warnings`。退出码 `0` 只表示报告无阻止项，**不表示规则已安全或已启用**；`1` 表示报告含阻止项，`2` 表示输入/参数错误。
+
+格式、限制和人工启用流程见 **[RULE_FORMAT.md](RULE_FORMAT.md)**。暂不导入 xdg-ninja/antidot 的迁移建议，也不复刻 systemd-tmpfiles 或执行上游脚本。
+
 ## 用户清理规则
 
 表中“缓存目录”为 `$XDG_CACHE_HOME` 或默认 `~/.cache`；缺失的规则目录正常跳过，重叠规则中的同一路径只计数一次。
@@ -181,4 +202,4 @@ dotnet run --project tests/LinuxCleaner.Tests.csproj -c Release
 
 测试以普通用户运行，用户清理只操作随机临时 HOME。系统清理使用假执行器验证命令、确认、权限和结果，不执行真实包缓存/journal 清理。进程执行器仅使用 env/head/false/sleep 等无清理副作用的命令验证环境、输出限制和中断。
 
-覆盖年龄/大小筛选、路径排除、排行、全部 31 条规则、重叠去重、账号/源码/本地历史/离线媒体保护、链接/FIFO、权限、路径替换、JSON、--all、确认、系统保留策略和取消。ARM64、真实子挂载点以及各发行版工具的实际 root 清理尚未实机测试。
+覆盖年龄/大小筛选、路径排除、排行、全部 31 条规则、JSON 规则校验、CleanerML 来源/平台/变量/警告/未知动作/实体与资源限制、重叠去重、账号/源码/本地历史/离线媒体保护、链接/FIFO、权限、路径替换、JSON、--all、确认、系统保留策略和取消。ARM64、真实子挂载点以及各发行版工具的实际 root 清理尚未实机测试。

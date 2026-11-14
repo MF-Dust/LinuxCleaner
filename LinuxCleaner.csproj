@@ -6,9 +6,10 @@
     <Nullable>enable</Nullable>
     <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
     <AssemblyName>linuxcleaner</AssemblyName>
-    <Version>0.3.0</Version>
+    <Version>0.4.0</Version>
   </PropertyGroup>
   <ItemGroup>
     <Compile Remove="tests/**/*.cs" />
+    <EmbeddedResource Include="rules/builtin.json" LogicalName="LinuxCleaner.rules.builtin.json" />
   </ItemGroup>
 </Project>

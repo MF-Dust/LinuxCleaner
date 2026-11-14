@@ -1,0 +1,582 @@
+{
+  "SchemaVersion": 1,
+  "Provenance": "RULE_SOURCES.md; path/semantics references: BleachBit fad04d2cb58dab37e1187404df86add511a52e87, cleanerml c48365810206ff337b8af6d11173ef6174edbfa5, official tool documentation; independently implemented and reviewed built-ins",
+  "Policies": {
+    "cache": {
+      "Include": [],
+      "Exclude": [
+        "thumbnails",
+        "mozilla",
+        "google-chrome",
+        "google-chrome-beta",
+        "chromium",
+        "microsoft-edge",
+        "BraveSoftware",
+        "librewolf",
+        "vivaldi",
+        "vivaldi-snapshot",
+        "opera",
+        "opera-beta",
+        "opera-developer",
+        "uv",
+        "pypoetry",
+        "JetBrains",
+        "ccache",
+        "spotify",
+        "Google/AndroidStudio*"
+      ]
+    },
+    "flatpak": {
+      "Include": [
+        {
+          "WhenFirstSegment": null,
+          "Index": 1,
+          "Names": [
+            "cache"
+          ]
+        }
+      ],
+      "Exclude": [
+        "*/cache/uv",
+        "*/cache/pypoetry",
+        "*/cache/JetBrains",
+        "*/cache/ccache",
+        "*/cache/spotify",
+        "*/cache/Google/AndroidStudio*"
+      ]
+    },
+    "snap": {
+      "Include": [
+        {
+          "WhenFirstSegment": null,
+          "Index": 2,
+          "Names": [
+            ".cache"
+          ]
+        }
+      ],
+      "Exclude": [
+        "*/*/.cache/uv",
+        "*/*/.cache/pypoetry",
+        "*/*/.cache/JetBrains",
+        "*/*/.cache/ccache",
+        "*/*/.cache/spotify",
+        "*/*/.cache/Google/AndroidStudio*"
+      ]
+    },
+    "browser-profiles": {
+      "Include": [
+        {
+          "WhenFirstSegment": null,
+          "Index": 1,
+          "Names": [
+            "Cache",
+            "Code Cache",
+            "GPUCache",
+            "DawnCache",
+            "GrShaderCache",
+            "ShaderCache",
+            "DawnGraphiteCache",
+            "DawnWebGPUCache",
+            "cache2",
+            "startupCache"
+          ]
+        }
+      ],
+      "Exclude": []
+    },
+    "vscode": {
+      "Include": [
+        {
+          "WhenFirstSegment": null,
+          "Index": 0,
+          "Names": [
+            "Cache",
+            "CachedData",
+            "CachedExtensionVSIXs",
+            "Code Cache",
+            "GPUCache",
+            "DawnGraphiteCache",
+            "DawnWebGPUCache"
+          ]
+        }
+      ],
+      "Exclude": []
+    },
+    "discord": {
+      "Include": [
+        {
+          "WhenFirstSegment": null,
+          "Index": 0,
+          "Names": [
+            "Code Cache",
+            "GPUCache"
+          ]
+        }
+      ],
+      "Exclude": []
+    },
+    "slack": {
+      "Include": [
+        {
+          "WhenFirstSegment": null,
+          "Index": 0,
+          "Names": [
+            "Cache",
+            "Code Cache",
+            "GPUCache"
+          ]
+        }
+      ],
+      "Exclude": []
+    },
+    "thunderbird-profiles": {
+      "Include": [
+        {
+          "WhenFirstSegment": "Profiles",
+          "Index": 2,
+          "Names": [
+            "Cache",
+            "cache2",
+            "startupCache"
+          ]
+        },
+        {
+          "WhenFirstSegment": null,
+          "Index": 1,
+          "Names": [
+            "Cache",
+            "cache2",
+            "startupCache"
+          ]
+        }
+      ],
+      "Exclude": []
+    },
+    "jetbrains": {
+      "Include": [
+        {
+          "WhenFirstSegment": null,
+          "Index": 1,
+          "Names": [
+            "caches",
+            "index",
+            "tmp"
+          ]
+        }
+      ],
+      "Exclude": []
+    },
+    "ccache": {
+      "Include": [
+        {
+          "WhenFirstSegment": null,
+          "Index": 0,
+          "Names": [
+            "0",
+            "1",
+            "2",
+            "3",
+            "4",
+            "5",
+            "6",
+            "7",
+            "8",
+            "9",
+            "a",
+            "b",
+            "c",
+            "d",
+            "e",
+            "f",
+            "tmp"
+          ]
+        }
+      ],
+      "Exclude": []
+    },
+    "opera": {
+      "Include": [
+        {
+          "WhenFirstSegment": "Default",
+          "Index": 1,
+          "Names": [
+            "Cache",
+            "Code Cache",
+            "GPUCache",
+            "DawnCache",
+            "GrShaderCache",
+            "ShaderCache",
+            "DawnGraphiteCache",
+            "DawnWebGPUCache",
+            "cache2",
+            "startupCache"
+          ]
+        },
+        {
+          "WhenFirstSegment": null,
+          "Index": 0,
+          "Names": [
+            "Cache",
+            "Code Cache",
+            "GPUCache",
+            "DawnCache",
+            "GrShaderCache",
+            "ShaderCache",
+            "DawnGraphiteCache",
+            "DawnWebGPUCache",
+            "cache2",
+            "startupCache"
+          ]
+        }
+      ],
+      "Exclude": []
+    }
+  },
+  "Rules": [
+    {
+      "Id": "cache",
+      "Description": "其他应用缓存（排除浏览器、缩略图和含用户数据的缓存树）",
+      "Default": true,
+      "Roots": [
+        "${CACHE}"
+      ],
+      "Policy": "cache"
+    },
+    {
+      "Id": "thumbnails",
+      "Description": "桌面缩略图缓存",
+      "Default": true,
+      "Roots": [
+        "${CACHE}/thumbnails"
+      ],
+      "Policy": null
+    },
+    {
+      "Id": "browsers",
+      "Description": "Firefox / Chromium 系及 LibreWolf / Vivaldi / Opera 缓存",
+      "Default": true,
+      "Roots": [
+        "${CACHE}/mozilla",
+        "${CACHE}/google-chrome",
+        "${CACHE}/google-chrome-beta",
+        "${CACHE}/chromium",
+        "${CACHE}/microsoft-edge",
+        "${CACHE}/BraveSoftware",
+        "${CACHE}/librewolf",
+        "${CACHE}/vivaldi",
+        "${CACHE}/vivaldi-snapshot",
+        "${CACHE}/opera",
+        "${CACHE}/opera-beta",
+        "${CACHE}/opera-developer"
+      ],
+      "Policy": null
+    },
+    {
+      "Id": "npm",
+      "Description": "npm 内容寻址下载缓存（不删除 node_modules）",
+      "Default": false,
+      "Roots": [
+        "${HOME}/.npm/_cacache"
+      ],
+      "Policy": null
+    },
+    {
+      "Id": "nuget",
+      "Description": "NuGet 默认 HTTP 下载缓存（不删除已安装包）",
+      "Default": false,
+      "Roots": [
+        "${HOME}/.local/share/NuGet/http-cache"
+      ],
+      "Policy": null
+    },
+    {
+      "Id": "pip",
+      "Description": "pip 下载和 wheel 缓存",
+      "Default": false,
+      "Roots": [
+        "${CACHE}/pip"
+      ],
+      "Policy": null
+    },
+    {
+      "Id": "yarn",
+      "Description": "Yarn 用户级下载缓存（不处理项目内 .yarn）",
+      "Default": false,
+      "Roots": [
+        "${CACHE}/yarn",
+        "${HOME}/.yarn/berry/cache"
+      ],
+      "Policy": null
+    },
+    {
+      "Id": "go",
+      "Description": "Go 编译缓存（不删除模块或源代码）",
+      "Default": false,
+      "Roots": [
+        "${CACHE}/go-build"
+      ],
+      "Policy": null
+    },
+    {
+      "Id": "cargo",
+      "Description": "Cargo registry 下载归档（不删除源码或工具链）",
+      "Default": false,
+      "Roots": [
+        "${HOME}/.cargo/registry/cache"
+      ],
+      "Policy": null
+    },
+    {
+      "Id": "gradle",
+      "Description": "Gradle 构建缓存（不删除 wrapper 或项目）",
+      "Default": false,
+      "Roots": [
+        "${HOME}/.gradle/caches"
+      ],
+      "Policy": null
+    },
+    {
+      "Id": "npm-logs",
+      "Description": "npm 历史调试日志",
+      "Default": false,
+      "Roots": [
+        "${HOME}/.npm/_logs"
+      ],
+      "Policy": null
+    },
+    {
+      "Id": "browser-profiles",
+      "Description": "浏览器配置内的缓存子目录（保留账号和历史）",
+      "Default": false,
+      "Roots": [
+        "${HOME}/.mozilla/firefox",
+        "${HOME}/.librewolf",
+        "${HOME}/.config/google-chrome",
+        "${HOME}/.config/google-chrome-beta",
+        "${HOME}/.config/chromium",
+        "${HOME}/.config/microsoft-edge",
+        "${HOME}/.config/BraveSoftware/Brave-Browser",
+        "${HOME}/.config/vivaldi",
+        "${HOME}/.config/vivaldi-snapshot"
+      ],
+      "Policy": "browser-profiles"
+    },
+    {
+      "Id": "flatpak",
+      "Description": "Flatpak 每个应用的 cache（不处理 data/config）",
+      "Default": false,
+      "Roots": [
+        "${HOME}/.var/app"
+      ],
+      "Policy": "flatpak"
+    },
+    {
+      "Id": "snap",
+      "Description": "Snap 各版本的 .cache（不处理应用数据或 current 链接）",
+      "Default": false,
+      "Roots": [
+        "${HOME}/snap"
+      ],
+      "Policy": "snap"
+    },
+    {
+      "Id": "composer",
+      "Description": "Composer 下载缓存（保留 auth.json 和 vendor）",
+      "Default": false,
+      "Roots": [
+        "${CACHE}/composer",
+        "${HOME}/.composer/cache",
+        "${HOME}/.composer/files",
+        "${HOME}/.composer/repo",
+        "${HOME}/.composer/vcs"
+      ],
+      "Policy": null
+    },
+    {
+      "Id": "poetry",
+      "Description": "Poetry 下载缓存和归档（保留 virtualenvs）",
+      "Default": false,
+      "Roots": [
+        "${CACHE}/pypoetry/cache",
+        "${CACHE}/pypoetry/artifacts"
+      ],
+      "Policy": null
+    },
+    {
+      "Id": "ccache",
+      "Description": "ccache 编译对象缓存（保留 ccache.conf）",
+      "Default": false,
+      "Roots": [
+        "${CACHE}/ccache",
+        "${HOME}/.ccache"
+      ],
+      "Policy": "ccache"
+    },
+    {
+      "Id": "sccache",
+      "Description": "sccache 编译对象缓存",
+      "Default": false,
+      "Roots": [
+        "${CACHE}/sccache"
+      ],
+      "Policy": null
+    },
+    {
+      "Id": "vscode",
+      "Description": "VS Code / Cursor / VSCodium 等编辑器缓存（保留设置、扩展和历史）",
+      "Default": false,
+      "Roots": [
+        "${HOME}/.config/Code",
+        "${HOME}/.config/Code - Insiders",
+        "${HOME}/.config/VSCodium",
+        "${HOME}/.config/Cursor",
+        "${HOME}/.config/Windsurf",
+        "${HOME}/.config/Windsurf - Next",
+        "${HOME}/.config/Antigravity",
+        "${HOME}/.config/Devin",
+        "${HOME}/.config/Devin - Next"
+      ],
+      "Policy": "vscode"
+    },
+    {
+      "Id": "discord",
+      "Description": "Discord JS/GPU 缓存（保留 HTTP 缓存、收藏 GIF 和登录数据）",
+      "Default": false,
+      "Roots": [
+        "${HOME}/.config/discord",
+        "${HOME}/.config/discordptb",
+        "${HOME}/.config/discordcanary",
+        "${HOME}/.config/discorddevelopment"
+      ],
+      "Policy": "discord"
+    },
+    {
+      "Id": "slack",
+      "Description": "Slack Web/JS/GPU 缓存（保留会话和工作区数据）",
+      "Default": false,
+      "Roots": [
+        "${HOME}/.config/Slack"
+      ],
+      "Policy": "slack"
+    },
+    {
+      "Id": "thunderbird",
+      "Description": "Thunderbird 独立缓存（不删除邮件）",
+      "Default": false,
+      "Roots": [
+        "${CACHE}/thunderbird"
+      ],
+      "Policy": null
+    },
+    {
+      "Id": "thunderbird-profiles",
+      "Description": "Thunderbird profile 内的缓存（保留邮件、账号和通讯录）",
+      "Default": false,
+      "Roots": [
+        "${HOME}/.thunderbird",
+        "${HOME}/.mozilla-thunderbird",
+        "${HOME}/.config/thunderbird",
+        "${HOME}/.config/mozilla/thunderbird"
+      ],
+      "Policy": "thunderbird-profiles"
+    },
+    {
+      "Id": "steam-shaders",
+      "Description": "Steam 着色器缓存（保留游戏、存档及 Proton 前缀）",
+      "Default": false,
+      "Roots": [
+        "${HOME}/.local/share/Steam/steamapps/shadercache",
+        "${HOME}/.steam/steamapps/shadercache"
+      ],
+      "Policy": null
+    },
+    {
+      "Id": "steam-cache",
+      "Description": "Steam HTTP 和指定 Chromium 缓存（保留账号、Cookie 和用户数据）",
+      "Default": false,
+      "Roots": [
+        "${HOME}/.local/share/Steam/appcache/httpcache",
+        "${HOME}/.local/share/Steam/config/htmlcache/Cache",
+        "${HOME}/.local/share/Steam/config/htmlcache/Code Cache",
+        "${HOME}/.local/share/Steam/config/htmlcache/GPUCache",
+        "${HOME}/.local/share/Steam/config/htmlcache/Default/Cache",
+        "${HOME}/.local/share/Steam/config/htmlcache/Default/Code Cache",
+        "${HOME}/.local/share/Steam/config/htmlcache/Default/GPUCache",
+        "${HOME}/.local/share/Steam/htmlcache/Cache",
+        "${HOME}/.local/share/Steam/htmlcache/Code Cache",
+        "${HOME}/.local/share/Steam/htmlcache/GPUCache",
+        "${HOME}/.steam/appcache/httpcache",
+        "${HOME}/.steam/config/htmlcache/Cache",
+        "${HOME}/.steam/config/htmlcache/Code Cache",
+        "${HOME}/.steam/config/htmlcache/GPUCache",
+        "${HOME}/.steam/config/htmlcache/Default/Cache",
+        "${HOME}/.steam/config/htmlcache/Default/Code Cache",
+        "${HOME}/.steam/config/htmlcache/Default/GPUCache",
+        "${HOME}/.steam/htmlcache/Cache",
+        "${HOME}/.steam/htmlcache/Code Cache",
+        "${HOME}/.steam/htmlcache/GPUCache"
+      ],
+      "Policy": null
+    },
+    {
+      "Id": "mesa-shaders",
+      "Description": "Mesa 着色器缓存（下次运行需重新编译）",
+      "Default": false,
+      "Roots": [
+        "${CACHE}/mesa_shader_cache",
+        "${CACHE}/mesa_shader_cache_db",
+        "${CACHE}/mesa_shader_cache_sf"
+      ],
+      "Policy": null
+    },
+    {
+      "Id": "gstreamer",
+      "Description": "GStreamer 插件注册缓存（不删除插件）",
+      "Default": false,
+      "Roots": [
+        "${CACHE}/gstreamer-1.0"
+      ],
+      "Policy": null
+    },
+    {
+      "Id": "fontconfig",
+      "Description": "Fontconfig 字体缓存（不删除字体和配置）",
+      "Default": false,
+      "Roots": [
+        "${CACHE}/fontconfig"
+      ],
+      "Policy": null
+    },
+    {
+      "Id": "winetricks",
+      "Description": "Winetricks 下载缓存（不删除 Wine 前缀）",
+      "Default": false,
+      "Roots": [
+        "${CACHE}/winetricks",
+        "${HOME}/.winetrickscache"
+      ],
+      "Policy": null
+    },
+    {
+      "Id": "jetbrains",
+      "Description": "JetBrains 索引/缓存/tmp（保留本地历史和配置）",
+      "Default": false,
+      "Roots": [
+        "${CACHE}/JetBrains"
+      ],
+      "Policy": "jetbrains"
+    },
+    {
+      "Id": "opera",
+      "Description": "Opera 配置内的指定缓存（保留历史、密码和会话）",
+      "Default": false,
+      "Roots": [
+        "${HOME}/.config/opera",
+        "${HOME}/.config/opera-beta",
+        "${HOME}/.config/opera-developer"
+      ],
+      "Policy": "opera"
+    }
+  ]
+}

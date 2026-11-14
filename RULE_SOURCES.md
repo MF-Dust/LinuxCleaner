@@ -2,7 +2,7 @@
 
 核对日期：2026-11-14。本文记录参考依据，不代表所有应用/发行版版本均已实机测试。
 
-通过 Google 检索官方文档，并实际阅读以下源码快照中的规则；只参考路径事实与数据语义，不捆绑、加载或执行上游 XML / 脚本，清理逻辑独立实现：
+通过 Google 检索官方文档，并实际阅读以下源码快照中的规则；内置规则只参考路径事实与数据语义，不捆绑或执行上游 XML / 脚本，清理逻辑独立实现。路径和筛选策略位于 [rules/builtin.json](rules/builtin.json)，审核/导入流程见 [RULE_FORMAT.md](RULE_FORMAT.md)。独立的 `rules import` 只将调用者提供的本地 XML 转成待审报告，不会启用或执行上游规则：
 
 - [BleachBit cleaners，fad04d2](https://github.com/bleachbit/bleachbit/tree/fad04d2cb58dab37e1187404df86add511a52e87/cleaners)
 - [BleachBit 社区 cleanerml，c483658](https://github.com/bleachbit/cleanerml/tree/c48365810206ff337b8af6d11173ef6174edbfa5)；其中 pending 规则不是已验证的安全白名单，不能直接套用。

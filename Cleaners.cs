@@ -1,22 +1,84 @@
+using System.Text.Json;
+using System.Text.Json.Serialization;
+
 namespace LinuxCleaner;
 
 internal sealed record Cleaner(string Id, string Description, bool Default, string[] Roots);
+internal sealed record CacheSelector(string? WhenFirstSegment, int Index, string[] Names);
+internal sealed record RulePolicy(CacheSelector[] Include, string[] Exclude);
+internal sealed record RuleDefinition(string Id, string Description, bool Default, string[] Roots, string? Policy);
+internal sealed record RuleCatalog(int SchemaVersion, string Provenance,
+    Dictionary<string, RulePolicy> Policies, RuleDefinition[] Rules);
 
 internal static class Cleaners
 {
-    private static readonly string[] FlatpakCacheNames = ["cache"];
-    private static readonly string[] SnapCacheNames = [".cache"];
-    private static readonly string[] ProfileCacheNames = ["Cache", "Code Cache", "GPUCache", "DawnCache",
-        "GrShaderCache", "ShaderCache", "DawnGraphiteCache", "DawnWebGPUCache", "cache2", "startupCache"];
-    private static readonly string[] BrowserNames = ["mozilla", "google-chrome", "google-chrome-beta", "chromium",
-        "microsoft-edge", "BraveSoftware", "librewolf", "vivaldi", "vivaldi-snapshot", "opera", "opera-beta", "opera-developer"];
-    private static readonly string[] EditorCacheNames = ["Cache", "CachedData", "CachedExtensionVSIXs",
-        "Code Cache", "GPUCache", "DawnGraphiteCache", "DawnWebGPUCache"];
-    private static readonly string[] WebCacheNames = ["Cache", "Code Cache", "GPUCache"];
-    private static readonly string[] DiscordCacheNames = ["Code Cache", "GPUCache"];
-    private static readonly string[] MailCacheNames = ["Cache", "cache2", "startupCache"];
-    private static readonly string[] IdeCacheNames = ["caches", "index", "tmp"];
-    private static readonly string[] SensitiveCacheNames = ["uv", "pypoetry", "JetBrains", "ccache", "spotify"];
+    // Only this embedded, code-reviewed catalog is executable; import reports are never loaded here.
+    private static readonly RuleCatalog Catalog = LoadCatalog();
+    private static readonly Dictionary<string, (CacheSelector[] Include, string[][] Exclude)> Policies =
+        Catalog.Rules.Where(r => r.Policy is not null).ToDictionary(r => r.Id, r =>
+        {
+            var policy = Catalog.Policies[r.Policy!];
+            return (policy.Include, policy.Exclude.Select(p => p.Split('/')).ToArray());
+        }, StringComparer.Ordinal);
+
+    private static RuleCatalog LoadCatalog()
+    {
+        using var stream = typeof(Cleaners).Assembly.GetManifestResourceStream("LinuxCleaner.rules.builtin.json")
+            ?? throw new InvalidOperationException("缺少内置规则包。");
+        var catalog = JsonSerializer.Deserialize<RuleCatalog>(stream, new JsonSerializerOptions
+        {
+            UnmappedMemberHandling = JsonUnmappedMemberHandling.Disallow,
+            RespectRequiredConstructorParameters = true
+        }) ?? throw new InvalidOperationException("规则包为空。");
+        ValidateCatalog(catalog);
+        return catalog;
+    }
+
+    internal static void ValidateCatalog(RuleCatalog catalog)
+    {
+        if (catalog.SchemaVersion != 1 || string.IsNullOrWhiteSpace(catalog.Provenance)
+            || catalog.Rules is not { Length: > 0 } || catalog.Policies is null)
+            throw new ArgumentException("无效规则包版本或元数据。");
+        HashSet<string> ids = new(StringComparer.Ordinal);
+        foreach (var rule in catalog.Rules)
+        {
+            if (rule is null || string.IsNullOrWhiteSpace(rule.Id) || !ids.Add(rule.Id)
+                || !rule.Id.All(c => c is >= 'a' and <= 'z' or >= '0' and <= '9' or '-')
+                || string.IsNullOrWhiteSpace(rule.Description) || rule.Roots is not { Length: > 0 }
+                || (rule.Policy is not null && !catalog.Policies.ContainsKey(rule.Policy)))
+                throw new ArgumentException("无效规则 ID、根目录或策略引用。");
+            foreach (var root in rule.Roots)
+            {
+                if (root == "${CACHE}") continue;
+                var prefix = root?.StartsWith("${HOME}/", StringComparison.Ordinal) == true ? "${HOME}/"
+                    : root?.StartsWith("${CACHE}/", StringComparison.Ordinal) == true ? "${CACHE}/" : null;
+                if (prefix is null || !SafeSegments(root![prefix.Length..], false))
+                    throw new ArgumentException("规则根目录必须使用 HOME/CACHE 模板和明确路径段。");
+            }
+        }
+        foreach (var policy in catalog.Policies.Values)
+        {
+            if (policy is null || policy.Include is null || policy.Exclude is null)
+                throw new ArgumentException("无效筛选策略。");
+            for (var i = 0; i < policy.Include.Length; i++)
+            {
+                var selector = policy.Include[i];
+                if (selector is null || selector.Index is < 0 or > 8 || selector.Names is not { Length: > 0 }
+                    || selector.Names.Any(n => !SafeSegments(n, false) || n.Contains('/'))
+                    || (selector.WhenFirstSegment is not null &&
+                        (!SafeSegments(selector.WhenFirstSegment, false) || selector.WhenFirstSegment.Contains('/')))
+                    || (selector.WhenFirstSegment is null && i != policy.Include.Length - 1))
+                    throw new ArgumentException("无效缓存子树选择器或默认选择器顺序。");
+            }
+            if (policy.Exclude.Any(p => !SafeSegments(p, true)))
+                throw new ArgumentException("无效排除模式。");
+        }
+    }
+
+    private static bool SafeSegments(string? path, bool patterns) => !string.IsNullOrEmpty(path)
+        && path.Split('/').All(p => p.Length > 0 && p is not ("." or "..")
+            && !p.Any(c => char.IsControl(c) || c is '\\' or '$' or '?' or '[' or ']')
+            && (patterns ? !p[..^1].Contains('*') : !p.Contains('*')));
 
     internal static IReadOnlyList<Cleaner> Create(string home, string? xdgCache)
     {
@@ -36,119 +98,48 @@ internal static class Cleaners
             if (cache == path || IsWithin(cache, path) || IsWithin(path, cache))
                 throw new ArgumentException($"拒绝将受保护目录用作缓存：{cache}");
         }
-
-        string[] steamRoots = [Path.Combine(home, ".local", "share", "Steam"), Path.Combine(home, ".steam")];
-        return [
-            new("cache", "其他应用缓存（排除浏览器、缩略图和含用户数据的缓存树）", true, [cache]),
-            new("thumbnails", "桌面缩略图缓存", true, [Path.Combine(cache, "thumbnails")]),
-            new("browsers", "Firefox / Chromium 系及 LibreWolf / Vivaldi / Opera 缓存", true,
-                BrowserNames.Select(name => Path.Combine(cache, name)).ToArray()),
-            new("npm", "npm 内容寻址下载缓存（不删除 node_modules）", false,
-                [Path.Combine(home, ".npm", "_cacache")]),
-            new("nuget", "NuGet 默认 HTTP 下载缓存（不删除已安装包）", false,
-                [Path.Combine(home, ".local", "share", "NuGet", "http-cache")]),
-            new("pip", "pip 下载和 wheel 缓存", false, [Path.Combine(cache, "pip")]),
-            new("yarn", "Yarn 用户级下载缓存（不处理项目内 .yarn）", false,
-                [Path.Combine(cache, "yarn"), Path.Combine(home, ".yarn", "berry", "cache")]),
-            new("go", "Go 编译缓存（不删除模块或源代码）", false, [Path.Combine(cache, "go-build")]),
-            new("cargo", "Cargo registry 下载归档（不删除源码或工具链）", false,
-                [Path.Combine(home, ".cargo", "registry", "cache")]),
-            new("gradle", "Gradle 构建缓存（不删除 wrapper 或项目）", false,
-                [Path.Combine(home, ".gradle", "caches")]),
-            new("npm-logs", "npm 历史调试日志", false, [Path.Combine(home, ".npm", "_logs")]),
-            new("browser-profiles", "浏览器配置内的缓存子目录（保留账号和历史）", false,
-                [Path.Combine(home, ".mozilla", "firefox"), Path.Combine(home, ".librewolf"),
-                 .. new[] { "google-chrome", "google-chrome-beta", "chromium", "microsoft-edge",
-                     "BraveSoftware/Brave-Browser", "vivaldi", "vivaldi-snapshot" }
-                     .Select(name => Path.Combine(home, ".config", name))]),
-            new("flatpak", "Flatpak 每个应用的 cache（不处理 data/config）", false,
-                [Path.Combine(home, ".var", "app")]),
-            new("snap", "Snap 各版本的 .cache（不处理应用数据或 current 链接）", false,
-                [Path.Combine(home, "snap")]),
-            new("composer", "Composer 下载缓存（保留 auth.json 和 vendor）", false,
-                [Path.Combine(cache, "composer"), .. new[] { "cache", "files", "repo", "vcs" }
-                    .Select(name => Path.Combine(home, ".composer", name))]),
-            new("poetry", "Poetry 下载缓存和归档（保留 virtualenvs）", false,
-                [Path.Combine(cache, "pypoetry", "cache"), Path.Combine(cache, "pypoetry", "artifacts")]),
-            new("ccache", "ccache 编译对象缓存（保留 ccache.conf）", false,
-                [Path.Combine(cache, "ccache"), Path.Combine(home, ".ccache")]),
-            new("sccache", "sccache 编译对象缓存", false, [Path.Combine(cache, "sccache")]),
-            new("vscode", "VS Code / Cursor / VSCodium 等编辑器缓存（保留设置、扩展和历史）", false,
-                new[] { "Code", "Code - Insiders", "VSCodium", "Cursor", "Windsurf", "Windsurf - Next",
-                    "Antigravity", "Devin", "Devin - Next" }.Select(name => Path.Combine(home, ".config", name)).ToArray()),
-            new("discord", "Discord JS/GPU 缓存（保留 HTTP 缓存、收藏 GIF 和登录数据）", false,
-                new[] { "discord", "discordptb", "discordcanary", "discorddevelopment" }
-                    .Select(name => Path.Combine(home, ".config", name)).ToArray()),
-            new("slack", "Slack Web/JS/GPU 缓存（保留会话和工作区数据）", false,
-                [Path.Combine(home, ".config", "Slack")]),
-            new("thunderbird", "Thunderbird 独立缓存（不删除邮件）", false,
-                [Path.Combine(cache, "thunderbird")]),
-            new("thunderbird-profiles", "Thunderbird profile 内的缓存（保留邮件、账号和通讯录）", false,
-                [Path.Combine(home, ".thunderbird"), Path.Combine(home, ".mozilla-thunderbird"),
-                 Path.Combine(home, ".config", "thunderbird"), Path.Combine(home, ".config", "mozilla", "thunderbird")]),
-            new("steam-shaders", "Steam 着色器缓存（保留游戏、存档及 Proton 前缀）", false,
-                steamRoots.Select(root => Path.Combine(root, "steamapps", "shadercache")).ToArray()),
-            new("steam-cache", "Steam HTTP 和指定 Chromium 缓存（保留账号、Cookie 和用户数据）", false,
-                steamRoots.SelectMany(root => new[] { "appcache/httpcache", "config/htmlcache/Cache",
-                    "config/htmlcache/Code Cache", "config/htmlcache/GPUCache", "config/htmlcache/Default/Cache",
-                    "config/htmlcache/Default/Code Cache", "config/htmlcache/Default/GPUCache",
-                    "htmlcache/Cache", "htmlcache/Code Cache", "htmlcache/GPUCache" }
-                    .Select(name => Path.Combine(root, name))).ToArray()),
-            new("mesa-shaders", "Mesa 着色器缓存（下次运行需重新编译）", false,
-                new[] { "mesa_shader_cache", "mesa_shader_cache_db", "mesa_shader_cache_sf" }
-                    .Select(name => Path.Combine(cache, name)).ToArray()),
-            new("gstreamer", "GStreamer 插件注册缓存（不删除插件）", false,
-                [Path.Combine(cache, "gstreamer-1.0")]),
-            new("fontconfig", "Fontconfig 字体缓存（不删除字体和配置）", false,
-                [Path.Combine(cache, "fontconfig")]),
-            new("winetricks", "Winetricks 下载缓存（不删除 Wine 前缀）", false,
-                [Path.Combine(cache, "winetricks"), Path.Combine(home, ".winetrickscache")]),
-            new("jetbrains", "JetBrains 索引/缓存/tmp（保留本地历史和配置）", false,
-                [Path.Combine(cache, "JetBrains")]),
-            new("opera", "Opera 配置内的指定缓存（保留历史、密码和会话）", false,
-                new[] { "opera", "opera-beta", "opera-developer" }.Select(name => Path.Combine(home, ".config", name)).ToArray())
-        ];
+        return Catalog.Rules.Select(r => new Cleaner(r.Id, r.Description, r.Default,
+            r.Roots.Select(root => root == "${CACHE}" ? cache
+                : root.StartsWith("${HOME}/", StringComparison.Ordinal) ? Path.Combine(home, root[8..])
+                : Path.Combine(cache, root[9..])).ToArray())).ToArray();
     }
+
+    // Import only directory scopes already reviewed here; selectors cannot be dropped during conversion.
+    internal static bool IsImportableCacheRoot(string root) => Catalog.Rules.Where(r => r.Policy is null)
+        .SelectMany(r => r.Roots).Where(r => r.StartsWith("${CACHE}/", StringComparison.Ordinal))
+        .Any(allowed => root == allowed || IsWithin(root, allowed));
 
     internal static bool IsWithin(string path, string parent) =>
         path.StartsWith(parent.TrimEnd('/') + "/", StringComparison.Ordinal);
 
     internal static bool Excluded(string cleaner, string relativePath, bool isDirectory)
     {
-        if (cleaner is not ("cache" or "flatpak" or "snap" or "browser-profiles" or "vscode"
-            or "discord" or "slack" or "thunderbird-profiles" or "jetbrains" or "ccache" or "opera"))
+        if (!Policies.TryGetValue(cleaner, out var policy))
             return false;
         var parts = relativePath.Split('/');
-        return cleaner switch
-        {
-            "cache" => parts[0] == "thumbnails" || BrowserNames.Contains(parts[0], StringComparer.Ordinal)
-                || SensitiveCacheSubtree(parts, 0),
-            "flatpak" => !InCacheSubtree(parts, 1, FlatpakCacheNames, isDirectory) || SensitiveCacheSubtree(parts, 2),
-            "snap" => !InCacheSubtree(parts, 2, SnapCacheNames, isDirectory) || SensitiveCacheSubtree(parts, 3),
-            "browser-profiles" => !InCacheSubtree(parts, 1, ProfileCacheNames, isDirectory),
-            "vscode" => !InCacheSubtree(parts, 0, EditorCacheNames, isDirectory),
-            "discord" => !InCacheSubtree(parts, 0, DiscordCacheNames, isDirectory),
-            "slack" => !InCacheSubtree(parts, 0, WebCacheNames, isDirectory),
-            "thunderbird-profiles" => !InCacheSubtree(parts, parts[0] == "Profiles" ? 2 : 1, MailCacheNames, isDirectory),
-            "jetbrains" => !InCacheSubtree(parts, 1, IdeCacheNames, isDirectory),
-            "ccache" => !((parts[0] == "tmp" || (parts[0].Length == 1 && "0123456789abcdef".Contains(parts[0][0])))
-                && (parts.Length > 1 || isDirectory)),
-            "opera" => !InCacheSubtree(parts, parts[0] == "Default" ? 1 : 0, ProfileCacheNames, isDirectory),
-            _ => false
-        };
+        if (policy.Exclude.Any(pattern => MatchesPrefix(parts, pattern)))
+            return true;
+        if (policy.Include.Length == 0)
+            return false;
+        var selector = policy.Include.FirstOrDefault(s => s.WhenFirstSegment is null
+            || s.WhenFirstSegment == parts[0]);
+        if (selector is null)
+            return true;
+        if (parts.Length <= selector.Index)
+            return !isDirectory;
+        return !selector.Names.Contains(parts[selector.Index], StringComparer.Ordinal)
+            || (parts.Length == selector.Index + 1 && !isDirectory);
     }
 
-    // These nominal cache roots contain environments, history, configuration or offline media.
-    private static bool SensitiveCacheSubtree(string[] parts, int index) => parts.Length > index
-        && (SensitiveCacheNames.Contains(parts[index], StringComparer.Ordinal)
-            || (parts[index] == "Google" && parts.Length > index + 1
-                && parts[index + 1].StartsWith("AndroidStudio", StringComparison.Ordinal)));
-
-    private static bool InCacheSubtree(string[] parts, int cacheIndex, string[] names, bool isDirectory)
+    private static bool MatchesPrefix(string[] parts, string[] pattern)
     {
-        if (parts.Length <= cacheIndex)
-            return isDirectory;
-        return names.Contains(parts[cacheIndex], StringComparer.Ordinal)
-            && (parts.Length > cacheIndex + 1 || isDirectory);
+        if (parts.Length < pattern.Length) return false;
+        for (var i = 0; i < pattern.Length; i++)
+        {
+            var segment = pattern[i];
+            if (!(segment.EndsWith('*') ? parts[i].StartsWith(segment[..^1], StringComparison.Ordinal)
+                : parts[i] == segment)) return false;
+        }
+        return true;
     }
 }

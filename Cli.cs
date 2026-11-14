@@ -88,6 +88,8 @@ internal static class Cli
     {
         try
         {
+            if (args.Length > 0 && args[0] == "rules")
+                return CleanerMlImporter.Run(args[1..], output, cancellation);
             if (args.Length > 0 && args[0] == "system")
                 return SystemMaintenance.Run(args[1..], input, output, error, inputRedirected, cancellation);
             var options = Options.Parse(args);
@@ -98,7 +100,7 @@ internal static class Cli
             }
             if (options.Command == "version")
             {
-                output.WriteLine("linuxcleaner 0.3.0");
+                output.WriteLine("linuxcleaner 0.4.0");
                 return 0;
             }
             if (!OperatingSystem.IsLinux())
@@ -204,7 +206,8 @@ internal static class Cli
         }
         catch (Exception exception) when (exception is ArgumentException or IOException
             or UnauthorizedAccessException or EntryPointNotFoundException or DllNotFoundException
-            or OverflowException or PlatformNotSupportedException or System.ComponentModel.Win32Exception)
+            or OverflowException or PlatformNotSupportedException or System.ComponentModel.Win32Exception
+            or System.Xml.XmlException)
         {
             error.WriteLine($"错误：{Display(exception.Message)}");
             return 2;
@@ -236,6 +239,7 @@ internal static class Cli
         LinuxCleaner — 安全优先的 Linux 用户缓存清理 CLI
 
         用法：
+          linuxcleaner rules --help  （本地 CleanerML 转待审报告，不自动启用）
           linuxcleaner list [--json]
           linuxcleaner scan  [规则 ...] [--older-than 天数] [--verbose] [--json]
           linuxcleaner clean [规则 ...] [--older-than 天数] [--dry-run]

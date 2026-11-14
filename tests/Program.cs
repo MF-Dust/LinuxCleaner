@@ -841,8 +841,204 @@ Test("系统 CLI 帮助和列表不依赖 HOME 或缓存配置", () =>
     Equal(2, doc.RootElement.GetArrayLength());
 });
 
+Test("内置 JSON 策略保持目录边界和特殊 profile 布局", () =>
+{
+    foreach (var (id, path, directory, excluded) in new (string, string, bool, bool)[] {
+        ("vscode", "Cache", false, true), ("vscode", "Cache", true, false),
+        ("vscode", "Cache/file", false, false), ("vscode", "User/History/file", false, true),
+        ("thunderbird-profiles", "Profiles", false, true),
+        ("thunderbird-profiles", "Profiles/profile/cache2/file", false, false),
+        ("thunderbird-profiles", "Profiles/cache2/file", false, true),
+        ("thunderbird-profiles", "profile/cache2/file", false, false),
+        ("opera", "Default/Cache/file", false, false), ("opera", "Default/Cookies", false, true),
+        ("ccache", "a", false, true), ("ccache", "a/file", false, false),
+        ("cache", "Google/AndroidStudio2026/cache/file", false, true),
+        ("cache", "Google/Other/file", false, false),
+        ("flatpak", "app/cache/uv/file", false, true),
+        ("snap", "app/common/.cache/pypoetry/virtualenvs/file", false, true) })
+        Equal(excluded, Cleaners.Excluded(id, path, directory));
+    using var f = new Fixture();
+    var unusualHome = Path.Combine(f.Home, "${CACHE}");
+    True(Cleaners.Create(unusualHome, null).Single(c => c.Id == "npm").Roots.Single()
+        == Path.Combine(unusualHome, ".npm/_cacache"));
+});
+Test("规则包校验拒绝未知版本、重复 ID、路径逃逸和无效策略", () =>
+{
+    var rule = new RuleDefinition("test", "test", false, ["${CACHE}/test"], null);
+    var valid = new RuleCatalog(1, "test source", [], [rule]);
+    Cleaners.ValidateCatalog(valid);
+    Throws<ArgumentException>(() => Cleaners.ValidateCatalog(valid with { SchemaVersion = 2 }));
+    Throws<ArgumentException>(() => Cleaners.ValidateCatalog(valid with { Rules = [rule, rule] }));
+    foreach (var root in new[] { "${HOME}", "/etc", "${CACHE}/../.ssh", "${CACHE}/", "${CACHE}/*", "${CACHE}/$UNKNOWN" })
+        Throws<ArgumentException>(() => Cleaners.ValidateCatalog(valid with { Rules = [rule with { Roots = [root] }] }));
+    Throws<ArgumentException>(() => Cleaners.ValidateCatalog(valid with { Rules = [rule with { Policy = "missing" }] }));
+    Throws<ArgumentException>(() => Cleaners.ValidateCatalog(valid with {
+        Policies = new() { ["bad"] = new([new(null, -1, ["Cache"])], []) } }));
+});
+
+Test("CleanerML 导入保留来源、哈希、版权和变量的 Linux 值，不触及磁盘数据", () =>
+{
+    using var f = new Fixture();
+    var cache = f.File(".cache/pip/keep", 20);
+    var xml = """
+        <!-- SPDX-License-Identifier: GPL-3.0-or-later; Copyright Test -->
+        <cleaner id="pip" os="linux">
+          <var name="nested"><value>$$base$$/http</value></var>
+          <var name="base"><value os="windows">C:\temp</value><value os="linux">$XDG_CACHE_HOME/pip</value><value os="unix">~/.cache/pip</value></var>
+          <option id="cache"><label>Cache</label><description translators="test">Downloads</description>
+            <action command="delete" search="walk.all" path="$$nested$$/" />
+            <action command="delete" search="walk.files" path="${HOME}/.cache/pip/wheels/" />
+          </option>
+        </cleaner>
+        """;
+    var report = ImportXml(xml);
+    Equal("PendingReview", report.Status);
+    True(!report.AutoEnabled);
+    Equal("https://example.org/pip.xml", report.Source.Url);
+    Equal("pinned-test-revision", report.Source.Revision);
+    Equal("GPL-3.0-or-later", report.Source.DeclaredLicense);
+    var expectedHash = Convert.ToHexStringLower(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(xml)));
+    Equal(expectedHash, report.Source.Sha256);
+    True(report.SourceNotices.Single().Contains("Copyright Test"));
+    var option = report.Options.Single();
+    Equal("PendingReview", option.Status);
+    Equal(3, option.CandidateRoots.Length);
+    True(option.CandidateRoots.Contains("${CACHE}/pip/http"));
+    True(option.CandidateRoots.Contains("${HOME}/.cache/pip/http"));
+    True(option.CandidateRoots.Contains("${HOME}/.cache/pip/wheels"));
+    True(System.IO.File.Exists(cache));
+    Equal(31, f.Cleaners.Count);
+});
+Test("CleanerML 平台过滤覆盖 cleaner、option、action、var 和 value", () =>
+{
+    Equal("SkippedPlatform", ImportXml("<cleaner os='windows'><option id='cache'><action command='delete' search='walk.all' path='$XDG_CACHE_HOME/pip'/></option></cleaner>").Options.Single().Status);
+    Equal("SkippedPlatform", ImportXml("<cleaner><option id='cache' os='macos'><action command='shell' path='/tmp'/></option></cleaner>").Options.Single().Status);
+    var report = ImportXml("""
+        <cleaner><var name="base" os="windows"><value>$XDG_CACHE_HOME/pip</value></var>
+          <option id="cache"><action command="delete" search="walk.all" path="$$base$$"/></option>
+          <option id="other"><action os="windows" command="shell"/><action os="unix" command="delete" search="walk.files" path="$XDG_CACHE_HOME/pip"/></option>
+        </cleaner>
+        """);
+    Equal("Blocked", report.Options[0].Status);
+    Equal("PendingReview", report.Options[1].Status);
+    Equal("SkippedPlatform", report.Options[1].Actions[0].Status);
+    Equal("Blocked", ImportXml("<cleaner os='unknown'><option id='cache'><action command='delete' search='walk.all' path='$XDG_CACHE_HOME/pip'/></option></cleaner>").Options.Single().Status);
+});
+Test("CleanerML warning 和未知条件阻止整个 option，不部分启用", () =>
+{
+    var safe = "<action command='delete' search='walk.all' path='$XDG_CACHE_HOME/pip'/>";
+    foreach (var extra in new[] { "<warning>May lose data</warning>", "<action command='sqlite.vacuum' search='file' path='db'/>", "<unknown/>", "<running type='exe'>pip</running>" })
+    {
+        var option = ImportXml($"<cleaner><option id='cache'>{safe}{extra}</option></cleaner>").Options.Single();
+        Equal("Blocked", option.Status);
+        Equal(0, option.CandidateRoots.Length);
+    }
+    Equal("Blocked", ImportXml($"<cleaner><warning>Risk</warning><option id='cache'>{safe}</option></cleaner>").Options.Single().Status);
+    foreach (var xml in new[] {
+        $"<cleaner check='true'><option id='cache'>{safe}</option></cleaner>",
+        $"<cleaner><option id='cache' check='true'>{safe}</option></cleaner>",
+        "<cleaner><option id='cache'><action command='delete' search='walk.all' path='$XDG_CACHE_HOME/pip' regex='.*'/></option></cleaner>",
+        "<cleaner><var name='base'><value os='linux' executable='true'>$XDG_CACHE_HOME/pip</value></var><option id='cache'><action command='delete' search='walk.all' path='$$base$$'/></option></cleaner>" })
+        Equal("Blocked", ImportXml(xml).Options.Single().Status);
+});
+Test("CleanerML 不支持的动作与搜索模式均不执行", () =>
+{
+    foreach (var (command, search) in new[] { ("shell", "walk.all"), ("truncate", "file"),
+        ("sqlite.vacuum", "file"), ("json", "file"), ("delete", "glob"), ("delete", "file"), ("delete", "regex") })
+    {
+        var report = ImportXml($"<cleaner><option id='cache'><action command='{command}' search='{search}' path='$XDG_CACHE_HOME/pip'/></option></cleaner>");
+        Equal("Blocked", report.Options.Single().Status);
+        Equal(0, report.Options.Single().CandidateRoots.Length);
+    }
+});
+Test("CleanerML 拒绝敏感或未审核范围、路径逃逸、通配符和未知环境变量", () =>
+{
+    foreach (var path in new[] { "/etc", "~", "~/Documents/Cache", "~/.ssh", "~/.config/Code/Cache", "~/.cache",
+        "$XDG_CACHE_HOME/", "$XDG_CACHE_HOME/pip/../../.ssh", "$XDG_CACHE_HOME/pip/./a", "$XDG_CACHE_HOME/pip//a",
+        "$XDG_CACHE_HOME/pip/*", "$XDG_CACHE_HOME/pip/a?", "$XDG_CACHE_HOME/pip/$UNKNOWN", "$OTHER/pip",
+        "$XDG_CACHE_HOME/pip-evil", "$XDG_CACHE_HOME/uv", "$XDG_CACHE_HOME/pypoetry", "$XDG_CACHE_HOME/pypoetry/virtualenvs",
+        "$XDG_CACHE_HOME/JetBrains", "$XDG_CACHE_HOME/ccache", "$XDG_CACHE_HOME/spotify", "$XDG_CACHE_HOME/Google", "$XDG_CACHE_HOME/new-unreviewed-app" })
+        Equal("Blocked", ImportXml($"<cleaner><option id='cache'><action command='delete' search='walk.all' path='{path}'/></option></cleaner>").Options.Single().Status);
+    foreach (var path in new[] { "$XDG_CACHE_HOME/pypoetry/cache", "${XDG_CACHE_HOME}/pypoetry/artifacts", "$HOME/.cache/pip", "~/.cache/fontconfig" })
+        Equal("PendingReview", ImportXml($"<cleaner><option id='cache'><action command='delete' search='walk.files' path='{path}'/></option></cleaner>").Options.Single().Status);
+});
+Test("CleanerML 变量拒绝未定义、循环、重复与过量展开", () =>
+{
+    foreach (var variables in new[] {
+        "", "<var name='base'><value>$$base$$</value></var>",
+        "<var name='base'><value>$$next$$</value></var><var name='next'><value>$$base$$</value></var>",
+        "<var name='base'><value>$XDG_CACHE_HOME/pip</value></var><var name='base'><value>$XDG_CACHE_HOME/pip</value></var>",
+        "<var name='base'>" + string.Concat(Enumerable.Repeat("<value>$XDG_CACHE_HOME/pip</value>", 129)) + "</var>",
+        "<var name='base'><value>" + new string('a', 4097) + "</value></var>" })
+    {
+        var option = ImportXml($"<cleaner>{variables}<option id='cache'><action command='delete' search='walk.all' path='$$base$$'/></option></cleaner>").Options.Single();
+        Equal("Blocked", option.Status);
+        Equal(0, option.CandidateRoots.Length);
+    }
+    var chain = string.Concat(Enumerable.Range(0, 10).Select(i => $"<var name='v{i}'><value>$$v{i + 1}$$</value></var>"));
+    Equal("Blocked", ImportXml($"<cleaner>{chain}<option id='cache'><action command='delete' search='walk.all' path='$$v0$$'/></option></cleaner>").Options.Single().Status);
+    var values = "<var name='base'>" + string.Concat(Enumerable.Repeat("<value>$XDG_CACHE_HOME/pip</value>", 128)) + "</var>";
+    var actions = string.Concat(Enumerable.Repeat("<action command='delete' search='walk.all' path='$$base$$'/>", 33));
+    Equal("Blocked", ImportXml($"<cleaner>{values}<option id='cache'>{actions}</option></cleaner>").Options.Single().Status);
+});
+Test("CleanerML XML 禁止 DTD/实体，限制大小、深度、节点和动作数量", () =>
+{
+    foreach (var xml in new[] { "<!DOCTYPE cleaner [<!ENTITY leak SYSTEM 'file:///etc/passwd'>]><cleaner>&leak;</cleaner>",
+        "<!DOCTYPE cleaner [<!ENTITY test 'expanded'>]><cleaner>&test;</cleaner>", "<cleaner>" })
+        Throws<System.Xml.XmlException>(() => ImportXml(xml));
+    foreach (var xml in new[] { new string(' ', CleanerMlImporter.MaximumBytes + 1),
+        "<cleaner>" + string.Concat(Enumerable.Repeat("<x>", 34)) + string.Concat(Enumerable.Repeat("</x>", 34)) + "</cleaner>",
+        "<cleaner>" + string.Concat(Enumerable.Repeat("<!--node-->", 20001)) + "</cleaner>",
+        "<cleaner><option id='cache'>" + string.Concat(Enumerable.Repeat("<action/>", 257)) + "</option></cleaner>",
+        "<cleaner xmlns='urn:not-cleanerml'/>" })
+        Throws<ArgumentException>(() => ImportXml(xml));
+});
+Test("CleanerML 重复 option ID 和未知节点不能静默丢失", () =>
+{
+    var action = "<action command='delete' search='walk.all' path='$XDG_CACHE_HOME/pip'/>";
+    var report = ImportXml($"<cleaner><option id='cache'>{action}</option><option id='cache'>{action}</option></cleaner>");
+    True(report.Options.All(o => o.Status == "Blocked"));
+    var unknown = ImportXml($"<cleaner><command>touch /tmp/never-executed</command><option id='cache'>{action}</option></cleaner>");
+    True(unknown.Issues.Length > 0);
+    Equal("Blocked", unknown.Options.Single().Status);
+});
+Test("rules CLI 仅输出 JSON 审核报告，退出码区分阻止项和错误，不自动加载", () =>
+{
+    using var f = new Fixture();
+    var file = f.File("input.xml", 0);
+    System.IO.File.WriteAllText(file, "<cleaner id='imported'><option id='cache'><action command='delete' search='walk.files' path='$XDG_CACHE_HOME/pip'/></option></cleaner>");
+    string[] args = ["rules", "import", file, "--source", "https://example.org/rule.xml", "--revision", "pinned", "--license", "GPL-3.0-or-later"];
+    var run = RunCli(f, args);
+    Equal(0, run.Code);
+    Equal("", run.Error);
+    using var json = JsonDocument.Parse(run.Output);
+    True(!json.RootElement.GetProperty("AutoEnabled").GetBoolean());
+    Equal(2, RunCli(f, ["clean", "imported", "--yes"]).Code);
+    System.IO.File.WriteAllText(file, "<cleaner><option id='cache'><warning>Risk</warning></option></cleaner>");
+    var blocked = RunCli(f, args);
+    Equal(1, blocked.Code);
+    using var blockedJson = JsonDocument.Parse(blocked.Output);
+    Equal("Blocked", blockedJson.RootElement.GetProperty("Options")[0].GetProperty("Status").GetString());
+    System.IO.File.WriteAllText(file, "<!DOCTYPE cleaner><cleaner/>");
+    var bad = RunCli(f, args);
+    Equal(2, bad.Code);
+    Equal("", bad.Output);
+    Equal(0, RunCli(f, ["rules", "--help"]).Code);
+    Equal(2, RunCli(f, ["rules", "import", file]).Code);
+    Equal(2, RunCli(f, args.Select(a => a == "https://example.org/rule.xml" ? "file:///etc/passwd" : a).ToArray()).Code);
+    Equal(2, RunCli(f, args.Select(a => a == "--license" ? "--reviewed" : a).ToArray()).Code);
+});
+
 Console.WriteLine($"\n{result.Count - result.Failed}/{result.Count} 测试通过");
 return result.Failed == 0 ? 0 : 1;
+
+static ImportReport ImportXml(string xml)
+{
+    using var f = new Fixture();
+    var path = Path.Combine(f.Home, "input.xml");
+    System.IO.File.WriteAllText(path, xml, new System.Text.UTF8Encoding(false));
+    return CleanerMlImporter.Import(path, "https://example.org/pip.xml", "pinned-test-revision", "GPL-3.0-or-later");
+}
 
 void Test(string name, Action action)
 {
